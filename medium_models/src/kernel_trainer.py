@@ -32,7 +32,7 @@ from functorch import vmap, jvp, jacrev, make_functional_with_buffers
 
 import transformers
 from transformers.data.data_collator import DataCollator
-from transformers.file_utils import is_torch_tpu_available
+from transformers.utils import is_torch_tpu_available
 
 from transformers.modeling_utils import PreTrainedModel
 from transformers.training_args import TrainingArguments

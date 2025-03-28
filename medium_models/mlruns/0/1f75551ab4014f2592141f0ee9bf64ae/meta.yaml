@@ -1,0 +1,15 @@
+artifact_uri: file:///D:/GitHub/MeZO/medium_models/mlruns/0/1f75551ab4014f2592141f0ee9bf64ae/artifacts
+end_time: 1743183986548
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: 1f75551ab4014f2592141f0ee9bf64ae
+run_name: result/SST-2-roberta-large-prompt-standard-k16-roberta-large-loraseed42-bs8-lr1e-4-step1000-evalstep100/16-42
+run_uuid: 1f75551ab4014f2592141f0ee9bf64ae
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1743183840579
+status: 3
+tags: []
+user_id: idirt

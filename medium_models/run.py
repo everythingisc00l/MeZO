@@ -21,6 +21,7 @@ from src.linearhead_trainer import LinearHeadTrainer
 from src.dataset import FewShotDataset, OurInputFeatures
 from src.models import MODEL_TYPES, resize_token_type_embeddings, convert_opt_model
 from src.trainer import Trainer
+from src.kernel_trainer import KernelTrainerFunc
 from src.processors import processors_mapping, num_labels_mapping, output_modes_mapping, compute_metrics_mapping, bound_mapping
 
 from filelock import FileLock
@@ -441,7 +442,7 @@ class DynamicTrainingArguments(TrainingArguments):
         default=False,
         metadata={"help": "Clip the norm of the gradient for zero order (only when using trainer optimizer)"}
     )
-     
+
     # MeZO variants
     zo_by_layer: bool = field(
         default=False,
@@ -498,7 +499,7 @@ class DynamicTrainingArguments(TrainingArguments):
         default=0,
         metadata={'help': 'Stop at this number of ZO forward steps. The trainer will take whichever is reached first, max_steps or max_zo_forward_steps.'}
     )
-    
+
     untie_emb: bool = field(
         default=False,
         metadata={"help": "Untie embeddings from lm head. Only work for OPT!!"}
@@ -507,7 +508,7 @@ class DynamicTrainingArguments(TrainingArguments):
         default=False,
         metadata={"help": "Tie embeddings from lm head. Only work for RoBERTa!!"}
     )
-    
+
     optimize_acc: bool = field(
         default=False,
         metadata={"help": "Maximize accuracy instead of minimizing loss"}
@@ -592,7 +593,7 @@ class MyDataCollatorWithPadding:
         if "label_ids" in batch:
             batch["labels"] = batch["label_ids"]
             del batch["label_ids"]
-        
+
         if features[0].sfc_input_ids is not None:
             batch["sfc_input_ids"] = sfc_batch["input_ids"]
             batch["sfc_attention_mask"] = sfc_batch["attention_mask"]
@@ -639,68 +640,9 @@ def main():
         level=logging.INFO if training_args.local_rank in [-1, 0] else logging.WARN,
     )
 
-    # Load prompt/template/mapping file
-    if data_args.prompt:
-        if data_args.prompt_path is not None:
-            assert data_args.prompt_id is not None
-            prompt_list = []
-            with open(data_args.prompt_path) as f:
-                for line in f:
-                    line = line.strip()
-                    template, mapping = line.split('\t')
-                    prompt_list.append((template, mapping))
-
-            data_args.template, data_args.mapping = prompt_list[data_args.prompt_id]
-            logger.info("Specify load the %d-th prompt: %s | %s" % (data_args.prompt_id, data_args.template, data_args.mapping))
-        else:
-            if data_args.template_path is not None:
-                with open(data_args.template_path) as f:
-                    data_args.template_list = []
-                    for line in f:
-                        line = line.strip()
-                        if len(line) > 0:
-                            data_args.template_list.append(line)
-
-                # Load top-n templates
-                if data_args.top_n_template is not None:
-                    data_args.template_list = data_args.template_list[:data_args.top_n_template]
-                logger.info("Load top-%d templates from %s" % (len(data_args.template_list), data_args.template_path))
-
-                # ... or load i-th template
-                if data_args.template_id is not None:
-                    data_args.template = data_args.template_list[data_args.template_id]
-                    data_args.template_list = None
-                    logger.info("Specify load the %d-th template: %s" % (data_args.template_id, data_args.template))
-
-            if data_args.mapping_path is not None:
-                assert data_args.mapping_id is not None # Only can use one label word mapping
-                with open(data_args.mapping_path) as f:
-                    mapping_list = []
-                    for line in f:
-                        line = line.strip()
-                        mapping_list.append(line)
-
-                data_args.mapping = mapping_list[data_args.mapping_id]
-                logger.info("Specify using the %d-th mapping: %s" % (data_args.mapping_id, data_args.mapping))
-
-    # Check save path
-    if (
-        os.path.exists(training_args.output_dir)
-        and os.listdir(training_args.output_dir)
-        and training_args.do_train
-        and not training_args.overwrite_output_dir
-    ):
-        raise ValueError(f"Output directory ({training_args.output_dir}) already exists.")
-
-    logger.warning(
-        "Process rank: %s, device: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s",
-        training_args.local_rank,
-        training_args.device,
-        training_args.n_gpu,
-        bool(training_args.local_rank != -1),
-        training_args.fp16,
-    )
-    logger.info("Training/evaluation parameters %s", training_args)
+    # Отключаем интеграцию с ClearML, которая вызывает ошибку
+    if hasattr(training_args, 'report_to') and 'clearml' in training_args.report_to:
+        training_args.report_to = [x for x in training_args.report_to if x != 'clearml']
 
     # Set seed
     set_seed(training_args.seed)
@@ -879,16 +821,16 @@ def main():
     if training_args.tie_emb:
         logger.warn("Tie embeddings. Only work for RoBERTa (in our code by default they are not tied)")
         model.tie_emb()
-    
+
     if training_args.head_tuning:
         if model.config.model_type == "roberta":
             head_name = "lm_head"
 
         for n, p in model.named_parameters():
             if head_name not in n:
-                p.requires_grad = False 
+                p.requires_grad = False
             else:
-                logger.info(f"Only tuning {n}")        
+                logger.info(f"Only tuning {n}")
 
     tokenizer.model_type = model.config.model_type
 
@@ -973,6 +915,8 @@ def main():
     trainer_classes = {
         "standard": Trainer,
         "linearhead": LinearHeadTrainer,
+        "kernel": KernelTrainerFunc,
+        "hessian": Trainer,  # Using standard Trainer for "hessian" as a fallback
     }
     trainer_class = trainer_classes[training_args.trainer]
     trainer_kwargs = {}
@@ -998,6 +942,11 @@ def main():
         model.sfc_bias = F.log_softmax(logits.squeeze(0).detach())
         logger.info("SFC bias: {}".format(model.sfc_bias))
 
+    # Log distributed training information
+    if training_args.local_rank != -1:
+        logger.info(f"Running distributed training with local_rank={training_args.local_rank}")
+    else:
+        logger.info("Running in non-distributed mode")
 
     # Training
     if training_args.do_train:
@@ -1025,7 +974,7 @@ def main():
                 tokenizer.save_pretrained(training_args.output_dir)
                 torch.save(model_args, os.path.join(training_args.output_dir, "model_args.bin"))
                 torch.save(data_args, os.path.join(training_args.output_dir, "data_args.bin"))
-            
+
             if training_args.evaluate_during_training:
                 # Reload the best checkpoint (for eval)
                 # model.load_state_dict(trainer.best_model_ckpt)
@@ -1036,9 +985,9 @@ def main():
                 #     model = model_fn.from_pretrained(training_args.output_dir)
                 # if training_args.exclude_first_layers != -1:
                 #     model = convert_opt_model(model, config, training_args.exclude_first_layers)
-                
+
                 # model = model.to(training_args.device)
-                
+
                 # Now we just reload this from memory instead of disk <-- much faster
                 trainer.model.load_state_dict(trainer.best_model_ckpt)
 

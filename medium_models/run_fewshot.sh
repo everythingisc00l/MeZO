@@ -109,6 +109,11 @@ if [[ $NUM_GPU > 1 ]]; then
     # Allow multiple threads
     export OMP_NUM_THREADS=8
 
+    # Setup distributed training environment variables
+    export MASTER_ADDR=localhost
+    export MASTER_PORT=$PORT_ID
+    export WORLD_SIZE=$NUM_GPU
+
     python -m torch.distributed.launch --nproc_per_node $NUM_GPU --master_port $PORT_ID run.py \
         $ALL_ARGS_TOGETHER
 else

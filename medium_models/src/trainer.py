@@ -41,7 +41,7 @@ import math
 import time
 
 import transformers
-from transformers.file_utils import is_datasets_available, is_in_notebook, is_torch_tpu_available
+from transformers.utils.import_utils import is_datasets_available, is_in_notebook, is_torch_tpu_available
 from transformers.integrations import (
     is_comet_available,
     is_optuna_available,
@@ -264,7 +264,7 @@ class Trainer(LinearHeadTrainer):
             param.data = param.data + scaling_factor * z * self.args.zero_order_eps
 
         return model, random_vector
-    
+
     def perturb_parameters(self, model: nn.Module, random_vector=None, scaling_factor=1):
         if random_vector is None:
             random_vector = {}
@@ -301,16 +301,16 @@ class Trainer(LinearHeadTrainer):
             if self.should_optim(name, param):
                 self.named_parameters_to_optim.append((name, param))
 
-        self.cs = {'embed': 0.0, 'lm_head': 0.0} 
+        self.cs = {'embed': 0.0, 'lm_head': 0.0}
         # OPT: embed_tokens; embed_positions
         # RoBERTa: embeddings
         self.num_params = copy.deepcopy(self.cs)
         self.num_model_layers = model.config.num_hidden_layers
         layer_name = "layers" if model.config.model_type == "opt" else "layer"
-        for i in range(self.num_model_layers): 
+        for i in range(self.num_model_layers):
             self.cs[f'{layer_name}.{i}.'] = 0.0
             self.num_params[f'{layer_name}.{i}.'] = 0
-        
+
         # ZO estimation of c's
         if self.args.zo_variant != 'param_norm' and self.args.use_zo_grad_est:
             for layer in self.cs.keys():
@@ -324,7 +324,7 @@ class Trainer(LinearHeadTrainer):
                 self.cs[layer] = torch.abs(projected_grad)
 
                 model, z = self.perturb_single_layer(model, layer_name=layer, random_vector=z)
-        
+
         # no need to run backprop if we are using parameter norm variant, can just measure them
         elif self.args.zo_variant == 'param_norm':
             for name, param in self.named_parameters_to_optim:
@@ -339,15 +339,15 @@ class Trainer(LinearHeadTrainer):
                 self.cs[ckey] = torch.sqrt(self.cs[ckey])
                 if self.args.scale_norm_by_num_params:
                     self.cs[ckey] /= torch.sqrt(self.cs[ckey])
-            
+
             for ckey in self.cs:
                 if self.cs[ckey] != 0:
                     self.cs[ckey] = self.cs[ckey].detach().item()
-        
+
         # backpropagation estimation fo ZO c's
         #   this is mostly for debugging purposes to disentangle the variance from using ZO to estimate c
         #   from the effectiveness of the preconditioners
-        else: 
+        else:
             model.eval()
             inputs = self._prepare_inputs(inputs)
             with self.compute_loss_context_manager():
@@ -386,7 +386,7 @@ class Trainer(LinearHeadTrainer):
 
     def get_num_samples(self):
         if self.args.zero_order_sample_scheduler is None:
-            noise_sample_time = 1 
+            noise_sample_time = 1
         elif self.args.zero_order_sample_scheduler == "linear":
             noise_sample_time = max(1, int(self.state.global_step / self.args.max_steps * self.args.zero_order_sample))
         elif self.args.zero_order_sample_scheduler == "constant":
@@ -452,15 +452,6 @@ class Trainer(LinearHeadTrainer):
         if self.args.n_gpu > 1:
             model = torch.nn.DataParallel(model)
 
-        # Distributed training (should be after apex fp16 initialization)
-        if self.args.local_rank != -1:
-            model = torch.nn.parallel.DistributedDataParallel(
-                model,
-                device_ids=[self.args.local_rank],
-                output_device=self.args.local_rank,
-                find_unused_parameters=True,
-            )
-
         # Train
         if transformers.is_torch_tpu_available():
             total_train_batch_size = self.args.train_batch_size * xm.xrt_world_size()
@@ -468,7 +459,7 @@ class Trainer(LinearHeadTrainer):
             total_train_batch_size = (
                 self.args.train_batch_size
                 * self.args.gradient_accumulation_steps
-                * (torch.distributed.get_world_size() if self.args.local_rank != -1 else 1)
+                * (1)  # Используем 1 вместо world_size, так как отключили distributed training
             )
         logger.info("***** Running training *****")
         logger.info("  Num examples = %d", self.num_examples(train_dataloader))
@@ -537,12 +528,12 @@ class Trainer(LinearHeadTrainer):
                     self.initialize_c(model, inputs)
                 elif step == 0 and self.args.zo_variant is not None and self.args.recompute_norms:
                     self.initialize_c(model, inputs)
-                
+
                 # Skip past any already trained steps if resuming training
                 if steps_trained_in_current_epoch > 0:
                     steps_trained_in_current_epoch -= 1
                     continue
-                    
+
                 if self.args.zero_order_optim:
                     # Get parameters that should be optimized (for layer-wise optimization and prefix-tuning)
                     self.named_parameters_to_optim = []
@@ -561,7 +552,7 @@ class Trainer(LinearHeadTrainer):
                             for _ in range(num_zs):
                                 c_i = self.cs[layer]
                                 with torch.no_grad():
-                                    c_i = 1.0 if c_i == 0 else c_i # if the scaling is 0, just reset it to 1 so that there can eventually be some gradient to those layers 
+                                    c_i = 1.0 if c_i == 0 else c_i # if the scaling is 0, just reset it to 1 so that there can eventually be some gradient to those layers
                                     model, random_vector = self.perturb_single_layer(model, layer, scaling_factor=1.0/c_i)
                                     loss1 = self.zo_forward(model, inputs)
                                     model, random_vector = self.perturb_single_layer(model, layer, random_vector=random_vector, scaling_factor=-2.0/c_i)
@@ -572,7 +563,7 @@ class Trainer(LinearHeadTrainer):
                                 # scale grad according to number of zs sampled
                                 if not self.args.scale_lr_with_samples:
                                     projected_grad = projected_grad / float(num_zs)
-                                
+
                                 for name, param in self.named_parameters_to_optim:
                                     if self.retrieve_c(name) == layer:
                                         z_tilde = random_vector[name] * c_i
@@ -614,7 +605,7 @@ class Trainer(LinearHeadTrainer):
                                 elif self.args.zo_variant is not None:
                                     model, random_vector = self.norm_perturb_parameters(model, random_vector, scaling_factor=-2)
                                 else:
-                                    model, random_vector = self.perturb_parameters(model, random_vector, scaling_factor=-2)                 
+                                    model, random_vector = self.perturb_parameters(model, random_vector, scaling_factor=-2)
                                 loss2 = self.zo_forward(model, inputs)
 
                             projected_grad = (loss1 - loss2) / (2 * self.args.zero_order_eps)
@@ -623,7 +614,7 @@ class Trainer(LinearHeadTrainer):
                             if self.args.gradient_accumulation_steps > 1:
                                 assert self.args.zero_order_use_trainer_optim, 'grad accumulation not implemented for non-trainer ZO yet'
                                 projected_grad = projected_grad / self.args.gradient_accumulation_steps
-                            
+
                             # scale grad according to number of zs sampled
                             if not self.args.scale_lr_with_samples:
                                 projected_grad = projected_grad / float(num_zs)
@@ -634,7 +625,7 @@ class Trainer(LinearHeadTrainer):
                                 if self.args.efficient_zero_order:
                                     # print(random_seed)
                                     torch.manual_seed(random_seed)
-                                
+
                                 for name, param in self.named_parameters_to_optim:
                                     # recover noise used in perturbations
                                     if self.args.efficient_zero_order:
@@ -656,7 +647,7 @@ class Trainer(LinearHeadTrainer):
                             if self.args.efficient_zero_order:
                                 model = self.efficient_perturb_parameters(model, random_seed)
                             elif self.args.zo_variant is not None:
-                                model, random_vector = self.norm_perturb_parameters(model, random_vector)   
+                                model, random_vector = self.norm_perturb_parameters(model, random_vector)
                             else:
                                 model, random_vector = self.perturb_parameters(model, random_vector)
 
@@ -675,7 +666,7 @@ class Trainer(LinearHeadTrainer):
                             # Update the parameters and step scheduler
                             optimizer.step()
                             scheduler.step()
-                        
+
                             # logging
                             if (self.args.logging_steps > 0 and self.state.global_step % self.args.logging_steps == 0) or (
                                 self.state.global_step == 1 and self.args.logging_first_step
@@ -702,20 +693,20 @@ class Trainer(LinearHeadTrainer):
                                 logs["time"] = int(time.time() - start_time)
                                 self.log(logs)
                                 logger.info(str(logs))
-                            
+
                             model.zero_grad()
                             self.state.global_step += 1
                             self.epoch = epoch + (step + 1) / len(epoch_iterator)
                     # if not using the trainer, the updates are resampled and directly applied to the parameters
                     else:
-                        # Efficient mode 
+                        # Efficient mode
                         # WARNING: no gradient accumulation when not storing the grad
                         assert self.args.gradient_accumulation_steps == 1, 'gradient accumulation is not supported for zero-order optimization'
                         assert self.args.zero_order_sample_scheduler is None
                         assert not self.args.zero_order_clip_grad, 'gradient clipping not implemented yet for non-trainer ZO'
 
                         if self.args.efficient_zero_order:
-                            torch.manual_seed(random_seed)     
+                            torch.manual_seed(random_seed)
                         for name, param in self.named_parameters_to_optim:
                             if self.args.efficient_zero_order:
                                 z = torch.normal(mean=0, std=1, size=param.data.size(), device=param.data.device, dtype=param.data.dtype)
@@ -740,7 +731,7 @@ class Trainer(LinearHeadTrainer):
 
                         self.state.global_step += 1
                         self.epoch = epoch + (step + 1) / len(epoch_iterator)
-                    
+
                     # Debug information
                     # print("%.5f, %.5f" % (loss1.item(), loss2.item()))
                     # print("Loss: %.10f, projected_grad: %.5f" % (loss1, projected_grad))

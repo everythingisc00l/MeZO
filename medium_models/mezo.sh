@@ -4,11 +4,11 @@ TASK=${TASK:-SST-2}
 K=${K:-16}
 SEED=${SEED:-42}
 BS=${BS:-64}
-LR=${LR:-1e-6}
+LR=${LR:-1e-4}
 EPS=${EPS:-1e-3}
 WD=${WD:-0}
-STEP=${STEP:-100000}
-EVAL_STEP=${EVAL_STEP:-10000}
+STEP=${STEP:-1000}
+EVAL_STEP=${EVAL_STEP:-100}
 MODEL=${MODEL:-roberta-large}
 
 LOGITS=$(jq -n '{"SNLI": 3, "MNLI": 3, "trec": 6, "sst-5": 5}["'$TASK'"] // 2')

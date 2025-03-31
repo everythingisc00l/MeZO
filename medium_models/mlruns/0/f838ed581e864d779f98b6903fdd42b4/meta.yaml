@@ -1,0 +1,15 @@
+artifact_uri: file:///D:/GitHub/MeZO/medium_models/mlruns/0/f838ed581e864d779f98b6903fdd42b4/artifacts
+end_time: 1743430724468
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: f838ed581e864d779f98b6903fdd42b4
+run_name: result/MRPC-roberta-large-prompt-standard-k16-roberta-large-mezo-loraseed42-bs64-lr1e-4-eps1e-3-wd0-step100000-evalstep10000/16-42
+run_uuid: f838ed581e864d779f98b6903fdd42b4
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1743430483578
+status: 3
+tags: []
+user_id: idirt

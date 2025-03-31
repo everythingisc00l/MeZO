@@ -3,8 +3,8 @@
 TASK=${TASK:-SST-2}
 K=${K:-16}
 SEED=${SEED:-42}
-BS=${BS:-8}
-LR=${LR:-1e-5}
+BS=${BS:-64}
+LR=${LR:-1e-4}
 STEP=${STEP:-1000}
 EVAL_STEP=${EVAL_STEP:-100}
 MODEL=${MODEL:-roberta-large}
